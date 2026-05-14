@@ -1,0 +1,51 @@
+<!-- Started 2026-05-13, worked on & finished in the early morning of 2026-05-15 -->
+<!DOCTYPE html>
+<html>
+    <head>
+        <link rel="stylesheet" href="page.css">
+        <title>The opportunity cost of abstractions | maf's Blog</title>
+        <link rel="stylesheet" href="code.css">
+    </head>
+    <body>
+        <h1 class="nmm">The opportunity cost of abstractions</h1>
+        <section>
+            <p>
+Abstraction is great because it lets you create complex programs without getting overwhelmed by the details. Think about it: All objects in your program are made up of only very few fundamental types. C got away with: a few flavors of <code>int</code>, then, <code>float</code>, <code>char</code>, and pointer types... and that's it. Everything else, including <code>bool</code> as it used to be, are represented using just combinations of those types, but for the most part, you don't ever have to think about how your fancy <code>Promise</code> or <code>std::hive</code> or whatever are built. Except... in hiding the complexity of the data structures, it has also hidden away valuable optimization opportunities. Now before you yell: "Don't worry, my C/C++/Rust/... compiler will take care of this!", unfortunately, chances are, they won't. Low-level and systems programming languages usually require at least objects of the same type to have a uniform layout, so that you can always create a pointer to an object, and the programmer can reason about things like <code>sizeof</code> and that the compiler can have a stable ABI to compile against. The only time where this is broken is when storing values in one or more CPU registers, but in memory, you'll be hard pressed to find something that isn't layed out consistently. (This also simplifies the work of debuggers!)
+            </p>
+            <p>
+Why is that a problem? Well, consider this following snippet:
+<code class="block">struct Point{
+    int8_t x;
+    int8_t y;
+};
+
+Point ps[1048576];
+int8_t velocity[1048576];
+
+void game_tick(){
+    for(size_t i=0; i&lt;1048576; ++i){
+        ps[i].x += velocity[i];
+        if(ps[i].x > 12){
+            ps[i].x -= 12; // wrap around
+        }
+    }
+    
+    // upload ps to OpenGL...
+}
+</code>
+Assume the target architecture is x86-64. Can we optimize this code further? Yes, we could vectorize the code with SIMD. However, because data in <code>ps</code> is interleaved, we can only load half as many points at once (e.g. if your best SIMD register fits 32 bytes, then we can only load in 16 points at once) and need to use extra instructions to move the velocity numbers to the correct places, as well as mask the write back to memory. Now consider how an assembly programmer would approach this problem. They'll see this and say: "No problem, let's just not interleave the coordinates so that <code>ps</code> stores 1048576 x-coordinates then 1048576 y-coordinates instead!", and indeed that's no problem since OpenGL also supports uploading non-interleaved data. Now, we can just go over the first mebibyte of the <code>ps</code> array and indiscriminately add the velocities to the position data, then use a compare and masked subtract to handle the wraparound. No more overhead needed! And that is indeed the best solution.
+            </p>
+            <p>
+So, what failed us? Was it the compiler? No, it couldn't have possibly realized that OpenGL happens to support us uploading non-interleaved data by configuring the VAO a bit differently. It just sees us taking the memory address of <code>ps</code> and lays the <code>Point</code> objects out the obvious way. Was it the language that failed us? Yes, I think the language is partly to blame, but this isn't a simple fix either. What if you didn't write the <code>Point</code> struct? And, if <code>ps</code> was interleaved, what should the type of <code>ps[1]</code> be? Can you make a pointer to it? Can you do pointer arithmetic on it? ... There are many questions to answer. But if the language can't be fixed either, then what's going on? Surely computer memory and processor architectures aren't designed to be evil, right?
+            </p>
+            <p>
+Unfortunately, there is no silver bullet to this problem, nor am I here today to offer you a solution, but there is an important takeaway from this problem. The language seems to define object layout and support arrays in a reasonable way<sup id="ftnt-ref-1"><a href="#ftnt-1">1</a></sup>, and we aren't even losing anything to paddings here. Our code is straightforward and there isn't much we could've done better without pulling up inline assembly or compiler intrinsics, yet efficient vectorization was still somehow made impossible. <em>This</em> is the opportunity cost of abstractions. It turns out that simplicity... isn't itself simple. So maybe the next time you see the term "zero-cost abstraction", you can pause and think, "Is it truly zero cost?".
+            </p>
+            <p>Just a thought.</p>
+        </section>
+        <hr style="margin: 2lh auto;">
+        <section>
+            <p id="ftnt-1"><a href="#ftnt-ref-1">1</a>: C arrays have other problems like pointer decay, but here, we're just concerned about how arrays are indexed and objects are laid out. The point is, there are plenty of other languages with better arrays but where object layout still works nearly or exactly the same as C, and they all suffer from the same problem.</p>
+        </section>
+    </body>
+</html>

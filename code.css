@@ -6,7 +6,7 @@
     display: block;
 }
 .def{
-    background-color: #95dcf3;
+    background-color: #5f9fb4;
     margin: 10px auto;
     width: 58%;
     padding: 10px;
@@ -14,7 +14,7 @@
     box-sizing: border-box;
 }
 code{
-    background-color: #747474;
+    background-color: black;
     color: white;
     width: fit-content;
     padding-inline: 4px;

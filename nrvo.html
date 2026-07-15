@@ -1,0 +1,195 @@
+<!-- 2026-07-16 -->
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>The lambda NRVO trick | maf's Blog</title>
+        <link rel="stylesheet" href="page.css">
+        <link rel="stylesheet" href="code.css">
+        <link rel="stylesheet" href="hljs.css">
+        <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+        <script src="x86asmatt.min.js"></script>
+        <script type="module" src="cssover.js"></script>
+        <script type="module" src="hljs.js"></script>
+    </head>
+    <body>
+        <h1 class="nmm">The lambda NRVO trick</h1>
+        <section>
+            <p><strong>DISCLAIMER: All references to ABIs are accurate for the x86 and x86-64 (a.k.a. amd64) architectures only. I am not familiar with the C/C++ ABIs on other architectures.</strong></p>
+            <p>PS: If the blocks of assembly are too intimidating to you even with the comments, don't worry about them. I explain what's happening later, in higher-level language.</p>
+            <p>
+First, some background: In the standard <a href="https://refspecs.linuxbase.org/elf/x86_64-abi-0.99.pdf">C/C++ ABI</a>, if a function returns a value of a type that is too large to fit in a register, then an out-param is inserted before the normal parameter list, containg a pointer to caller-allocated memory (see page 22 of the linked pdf). That is, a function that looks like
+<code class="block cpp">Huge foo(){
+    return make_huge_object();
+}</code>
+is really<sup id="ftnt-ref-1"><a href="#ftnt-1">1</a></sup>
+<code class="block cpp">Huge* foo(void* dst){
+    Huge* obj = new(dst) Huge(make_huge_object());
+    return obj;
+}</code>
+. The standard also mandates a kind of optimization called RVO (Return Value Optimization), where, given, say,
+<code class="block cpp">std::vector&lt;int&gt; foo(){
+    return std::vector&lt;int&gt;{1,2,3};
+}
+int main(){
+    std::vector&lt;int&gt; instance{foo()};
+    return 0;
+}</code>
+, the temporary vector in foo <em>must</em> be constructed in-place into <code>instance</code>. It is not hard to see that under this ABI, the optimization is actually automatically implemented, as the address of <code>instance</code> is passed to <code>foo</code>'s out-param, which would cause it to be constructed in-place.
+            </p>
+            <p>
+But what if the value being returned is not a temporary? Specifically, what if we return a local variable? Well, in this case, the in-place construction optimization is called NRVO (<em>Named</em> Return Value Optimization), and is <em>not</em> mandated by the standard. It might not be immediately obvious why this optimization isn't guaranteed. In fact, for one (rather common) type of function, it <em>is</em> easy to perform NRVO. Specifically, functions that look like
+<code class="block cpp">std::vector&lt;int&gt; foo(){
+    std::vector&lt;int&gt; local;
+    do_something_with(local);
+    return local;
+}
+</code>
+can always be compiled as
+<code class="block cpp">std::vector&lt;int&gt;* foo(void* dst){
+    std::vector&lt;int&gt;* local = new(dst) std::vector&lt;int&gt;();
+    do_something_with(*local);
+    return local;
+}
+</code>
+. To see why NRVO cannot be performed under <em>all</em> cases, consider
+<code class="block cpp">std::vector&lt;int&gt; foo(bool condition){
+    std::vector&lt;int&gt; a, b;
+    populate(a);
+    populate(b);
+    
+    if(condition){
+        return a;
+    }else{
+        return b;
+    }
+}</code>
+; Here, although depending on <code>condition</code>, either <code>a</code> or <code>b</code> is returned, both vectors are unconditionally constructed. Clearly, the two vectors cannot go into the same location, so at least one vector must be constructed elsewhere and moved into the result location. (In fact, compilers might construct <em>neither</em> object in-place, though I'm not quite sure if it's just for simplicity or because "overwriting" the other value while returning has subtle edge cases that makes it not worth it.)
+            </p>
+            <p>
+The interesting part is when we consider this function:
+<code class="block cpp">void do_something_with(std::vector&lt;int&gt;&);
+
+std::vector&lt;int&gt; foo(bool condition){
+    if(condition){
+        return std::vector&lt;int&gt;{1,2,3};
+    }else{
+        std::vector&lt;int&gt; local{2,3,4};
+        do_something_with(local);
+        return local;
+    }
+}</code>
+It seems that the NRVO here with <code>local</code> should be pretty easy to implement. The lifetimes of the temporary vector in the true branch of the <code>if</code> and the vector <code>local</code> are mutually exclusive, meaning only one vector is constructed for any invocation of <code>foo</code> (though it could be either one). Therefore, both vectors can be constructed in-place. Let's check <a href="https://godbolt.org/z/j3zdh5hTG">GCC's assembly</a> to be sure:
+<code class="block x86asmatt">foo(bool):
+        pushq   %rbx             # push rbx onto the stack to save it
+        movq    %rdi, %rbx       # move the return location into rbx
+        movl    $16, %edi        # set the first argument to 16
+        subq    $32, %rsp        # allocate 32 (more) bytes on the stack frame.
+        testb   %sil, %sil       # test the bool
+        je      .L2              # if it is zero (false), then go to L2
+        call    operator new(unsigned long)  # allocate 16 bytes of memory, say let's call it buffer
+        movabsq $8589934593, %rcx            # set rcx to 00 00 00 02 00 00 00 01 (hex)
+        movq    %rcx, (%rax)                 # write that value to the allocated buffer
+        leaq    16(%rax), %rdx               # set rdx to buffer + 16 (which is the end-of-capacity pointer)
+        movl    $3, 8(%rax)                  # write 00 00 00 03 to buffer + 8. At this point, buffer contains the numbers 1 2 3.
+        movq    %rax, (%rbx)                 # set the buffer pointer of the returned vector to this buffer
+        addq    $12, %rax                    # offset the buffer pointer by 12, to get the end-of-data pointer
+        movq    %rax, 8(%rbx)                # write the end-of-data pointer to the returned vector's end pointer field
+        movq    %rbx, %rax                   # set rax to the return vector's address
+        movq    %rdx, 16(%rbx)               # write the end-of-capacity pointer to the return vector's capacity field
+        addq    $32, %rsp                    # free the 32-byte part of our stack frame.
+        popq    %rbx                         # restore rbx since it's callee-saved
+        ret
+.L2:
+        call    operator new(unsigned long)  # allocate 16 bytes of memory, say let's call it buffer
+        movq    %rsp, %rdi                   # set rdi to the start of our 32-byte stack frame
+        movabsq $12884901890, %rcx           # set rcx to 00 00 00 03 00 00 00 02 (hex)
+        movq    %rcx, (%rax)                 # write that value to the allocated buffer
+        leaq    16(%rax), %rdx               # set rdx to buffer + 16 (which is the end-of-capacity pointer)
+        movl    $4, 8(%rax)                  # write 00 00 00 04 to buffer + 8. At this point, buffer contains the numbers 2 3 4.
+        movq    %rax, (%rsp)                 # set the buffer pointer of the returned vector to this buffer
+        addq    $12, %rax                    # offset the buffer pointer by 12, to get the end-of-data pointer
+        movq    %rdx, 16(%rsp)               # write the end-of-capacity pointer to the return vector's capacity field
+        movq    %rax, 8(%rsp)                # write the end-of-data pointer to the returned vector's end pointer field
+        call    do_something_with(s​td​::vector&lt;int, s​td​::allocator&lt;int&gt; &gt;&) # call do_something_with
+        
+        # XXX
+        movq    16(%rsp), %rax               # move bytes 16 <= i < 24 of the vector data into rax
+        movdqa  (%rsp), %xmm0                # move bytes 0 <= i < 16 of the vector data into xmm0
+        movq    %rax, 16(%rbx)               # copy rax into bytes 16 <= i < 24 of the return location
+        movq    %rbx, %rax                   # set rax to the return location
+        movups  %xmm0, (%rbx)                # copy xmm0 into bytes 0 <= i < 16 of the return location
+        # XXX
+        
+        addq    $32, %rsp                    # free the 32-byte part of our stack frame. NOTE: ditto
+        popq    %rbx                         # restore rbx since it's callee-saved
+        ret                                  # return
+        
+        # Below is dead code that GCC generated for some reason I cannot explain.
+        movq    %rax, %rbx
+        jmp     .L4</code>
+Wait, where's my promised NRVO? GCC allocated a local <code>std::vector</code> on the stack, and then copied<sup id="ftnt-ref-2"><a href="#ftnt-2">2</a></sup> it into the return location (with the instructions between the XXX marks)! The move is cheap in this case, but still, we can definitely do better. Hey, I have an idea. How about...
+<code class="block cpp">void do_something_with(std::vector&lt;int&gt;&);
+
+std::vector&lt;int&gt; foo(bool condition){
+    if(condition){
+        return std::vector&lt;int&gt;{1,2,3};
+    }else{
+        return []{
+            std::vector&lt;int&gt; local{2,3,4};
+            do_something_with(local);
+            return local; // simple, unconditional NRVO case as shown above.
+        }(); // Mandatory RVO from temporary.
+    }
+}</code>
+At this point, you might be yelling at me. "How could adding more lambdas help? You'd be lucky if the things get inlined properly without extra overhead!" but after that, you might start getting curious. After all, the <code>return</code> within the lambda <em>does</em> seem like the "simple" NRVO case we outlined above, and there's no doubt that returning the temporary returned by the lambda is a mandatory RVO case. But surely this can't work, GCC probably just gives up on the inner NRVO because it can't chain it with the outer RVO or something. Well, talk is cheap, so let's pull up the assembly for this:
+<code class="block x86asmatt">foo(bool):
+        subq    $24, %rsp        # allocate 24 bytes on the stack frame
+        movq    %rbx, 8(%rsp)    # spill rbx register to stack frame +8
+        movq    %rdi, %rbx       # move the return location into rbx
+        movl    $16, %edi        # set the first argument to 16
+        testb   %sil, %sil       # test the bool
+        je      .L2              # if it is zero (false), then go to L2
+        call    operator new(unsigned long)  # allocate 16 bytes of memory, say let's call it buffer
+        movabsq $8589934593, %rcx            # set rcx to 00 00 00 02 00 00 00 01 (hex)
+        movq    %rcx, (%rax)                 # write that value to the allocated buffer
+        leaq    16(%rax), %rdx               # set rdx to buffer + 16 (which is the end-of-capacity pointer)
+        movl    $3, 8(%rax)                  # write 00 00 00 03 to buffer + 8. At this point, buffer contains the numbers 1 2 3.
+        movq    %rax, (%rbx)                 # set the buffer pointer of the returned vector to this buffer
+        addq    $12, %rax                    # offset the buffer pointer by 12, to get the end-of-data pointer
+        movq    %rax, 8(%rbx)                # write the end-of-data pointer to the returned vector's end pointer field
+        movq    %rbx, %rax                   # set rax to the return vector's address
+        movq    %rdx, 16(%rbx)               # write the end-of-capacity pointer to the return vector's capacity field
+        movq    8(%rsp), %rbx                # restore rbx since it's callee-saved
+        addq    $24, %rsp                    # free our stack frame
+        ret                                  # return
+.L2:                            # if bool is false
+        call    operator new(unsigned long)  # allocate 16 bytes of memory, say let's call it buffer
+        movq    %rbx, %rdi                   # set rdi to the return vector's address
+        movabsq $12884901890, %rcx           # set rcx to 00 00 00 03 00 00 00 02 (hex)
+        movq    %rcx, (%rax)                 # write that value to the allocated buffer
+        leaq    16(%rax), %rdx               # set rdx to buffer + 16 (which is the end-of-capacity pointer)
+        movl    $4, 8(%rax)                  # write 00 00 00 04 to buffer + 8. At this point, buffer contains the numbers 2 3 4.
+        movq    %rax, (%rbx)                 # set the buffer pointer of the returned vector to this buffer
+        addq    $12, %rax                    # offset the buffer pointer by 12, to get the end-of-data pointer
+        movq    %rdx, 16(%rbx)               # write the end-of-capacity pointer to the return vector's capacity field
+        movq    %rax, 8(%rbx)                # write the end-of-data pointer to the returned vector's end pointer field
+        call    do_something_with(s​td​::vector&lt;int, s​td​::allocator&lt;int&gt; &gt;&) # call do_something_with
+        movq    %rbx, %rax                   # set rax to the return vector's address
+        movq    8(%rsp), %rbx                # restore rbx since it's callee-saved
+        addq    $24, %rsp                    # free our stack frame
+        ret                                  # return
+        
+        # Below is dead code that GCC generated for some reason I cannot explain.
+        movq    %r14, 16(%rsp)
+        movq    %rax, %r14
+        jmp     .L4</code>
+Good news it is! The stack-allocated <code>local</code> is nowhere in sight. Stuffing the construction of <code>local</code> inside a lambda in the <code>return</code> statement caused the outer return in <code>foo</code> to upgrade to a forced RVO, and it seems that GCC can pick it up from here. It is truly weird that adding <em>more</em> indirection can make your code faster, but sometimes, that just might work.
+            </p>
+        </section>
+        <hr style="margin: 2lh auto;">
+        <section>
+            <p id="ftnt-1"><a href="#ftnt-ref-1">1</a>: Yes, the function also returns the exact same out-param that is passed in. This is required by the ABI, and is quite reasonable if you think about it, since rdi would've been clobbered by the call, and the caller probably wants to use the return value afterwards.</p>
+            <p id="ftnt-2"><a href="#ftnt-ref-2">2</a>: When I said "copy", I meant a copy of the underlying bytes, not of the C++ object. The code is in fact the result of inlining <code>std::vector</code>'s move constructor, as you'd expect.</p>
+        </section>
+    </body>
+</html>

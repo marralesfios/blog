@@ -141,7 +141,7 @@ std::vector&lt;int&gt; foo(bool condition){
         }(); // Mandatory RVO from temporary.
     }
 }</code>
-At this point, you might be yelling at me. "How could adding more lambdas help? You'd be lucky if the things get inlined properly without extra overhead!" but after that, you might start getting curious. After all, the <code>return</code> within the lambda <em>does</em> seem like the "simple" NRVO case we outlined above, and there's no doubt that returning the temporary returned by the lambda is a mandatory RVO case. But surely this can't work, GCC probably just gives up on the inner NRVO because it can't chain it with the outer RVO or something. Well, talk is cheap, so let's pull up the assembly for this:
+At this point, you might be yelling at me. "How could adding more lambdas help? You'd be lucky if the things get inlined properly without extra overhead!" but after that, you might start getting curious. After all, the <code>return</code> within the lambda <em>does</em> seem like the "simple" NRVO case we outlined above, and there's no doubt that returning the temporary returned by the lambda is a mandatory RVO case. But surely this can't work, GCC probably just gives up on the inner NRVO because it can't chain it with the outer RVO or something. Well, talk is cheap, so let's pull up <a href="https://godbolt.org/z/vxe1q64Ee">the assembly for this</a>:
 <code class="block x86asmatt">foo(bool):
         subq    $24, %rsp        # allocate 24 bytes on the stack frame
         movq    %rbx, 8(%rsp)    # spill rbx register to stack frame +8

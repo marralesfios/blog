@@ -14,7 +14,7 @@
     <body>
         <h1 class="nmm">The lambda NRVO trick</h1>
         <section>
-            <p><strong>DISCLAIMER: All references to ABIs are accurate for the x86 and x86-64 (a.k.a. amd64) architectures only. I am not familiar with the C/C++ ABIs on other architectures.</strong></p>
+            <p><strong>DISCLAIMER: All references to ABIs are accurate for the System V ABI on the x86 and x86_64 (a.k.a. amd64) architectures only. I am not familiar with other C/C++ ABIs.</strong></p>
             <p>PS: If the blocks of assembly are too intimidating to you even with the comments, don't worry about them. I explain what's happening later, in higher-level language.</p>
             <p>
 First, some background: In the standard <a href="https://refspecs.linuxbase.org/elf/x86_64-abi-0.99.pdf">C/C++ ABI</a>, if a function returns a value of a type that is too large to fit in a register, then an out-param is inserted before the normal parameter list, containg a pointer to caller-allocated memory (see page 22 of the linked pdf). That is, a function that looks like

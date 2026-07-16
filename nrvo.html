@@ -120,7 +120,7 @@ It seems that the NRVO here with <code>local</code> should be pretty easy to imp
         movups  %xmm0, (%rbx)                # copy xmm0 into bytes 0 <= i < 16 of the return location
         # XXX
         
-        addq    $32, %rsp                    # free the 32-byte part of our stack frame. NOTE: ditto
+        addq    $32, %rsp                    # free the 32-byte part of our stack frame.
         popq    %rbx                         # restore rbx since it's callee-saved
         ret                                  # return
         

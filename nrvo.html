@@ -124,7 +124,7 @@ It seems that the NRVO here with <code>local</code> should be pretty easy to imp
         popq    %rbx                         # restore rbx since it's callee-saved
         ret                                  # return
         
-        # Below is dead code that GCC generated for some reason I cannot explain.
+        # Exception handler code.
         movq    %rax, %rbx
         jmp     .L4</code>
 Wait, where's my promised NRVO? GCC allocated a local <code>std::vector</code> on the stack, and then copied<sup id="ftnt-ref-2"><a href="#ftnt-2">2</a></sup> it into the return location (with the instructions between the XXX marks)! The move is cheap in this case, but still, we can definitely do better. Hey, I have an idea. How about...
@@ -179,7 +179,7 @@ At this point, you might be yelling at me. "How could adding more lambdas help? 
         addq    $24, %rsp                    # free our stack frame
         ret                                  # return
         
-        # Below is dead code that GCC generated for some reason I cannot explain.
+        # Exception handler code.
         movq    %r14, 16(%rsp)
         movq    %rax, %r14
         jmp     .L4</code>

@@ -110,7 +110,7 @@ It seems that the NRVO here with <code>local</code> should be pretty easy to imp
         addq    $12, %rax                    # offset the buffer pointer by 12, to get the end-of-data pointer
         movq    %rdx, 16(%rsp)               # write the end-of-capacity pointer to the return vector's capacity field
         movq    %rax, 8(%rsp)                # write the end-of-data pointer to the returned vector's end pointer field
-        call    do_something_with(s​td​::vector&lt;int, s​td​::allocator&lt;int&gt; &gt;&) # call do_something_with
+        call    do_something_with(std::vector&lt;int, std::allocator&lt;int&gt; &gt;&) # call do_something_with
         
         # XXX
         movq    16(%rsp), %rax               # move bytes 16 <= i < 24 of the vector data into rax
@@ -173,7 +173,7 @@ At this point, you might be yelling at me. "How could adding more lambdas help? 
         addq    $12, %rax                    # offset the buffer pointer by 12, to get the end-of-data pointer
         movq    %rdx, 16(%rbx)               # write the end-of-capacity pointer to the return vector's capacity field
         movq    %rax, 8(%rbx)                # write the end-of-data pointer to the returned vector's end pointer field
-        call    do_something_with(s​td​::vector&lt;int, s​td​::allocator&lt;int&gt; &gt;&) # call do_something_with
+        call    do_something_with(std::vector&lt;int, std::allocator&lt;int&gt; &gt;&) # call do_something_with
         movq    %rbx, %rax                   # set rax to the return vector's address
         movq    8(%rsp), %rbx                # restore rbx since it's callee-saved
         addq    $24, %rsp                    # free our stack frame
@@ -183,12 +183,12 @@ At this point, you might be yelling at me. "How could adding more lambdas help? 
         movq    %r14, 16(%rsp)
         movq    %rax, %r14
         jmp     .L4</code>
-Good news it is! The stack-allocated <code>local</code> is nowhere in sight. Stuffing the construction of <code>local</code> inside a lambda in the <code>return</code> statement caused the outer return in <code>foo</code> to upgrade to a forced RVO, and it seems that GCC can pick it up from here. It is truly weird that adding <em>more</em> indirection can make your code faster, but sometimes, that just might work.
+Wait. The stack-allocated <code>local</code> is nowhere in sight! Stuffing the construction of <code>local</code> inside a lambda in the <code>return</code> statement caused the outer return in <code>foo</code> to upgrade to a forced RVO, and it seems that GCC can pick it up from here. It is truly weird that adding <em>more</em> indirection can make your code faster, but sometimes, that just might work.
             </p>
         </section>
         <hr style="margin: 2lh auto;">
         <section>
-            <p id="ftnt-1"><a href="#ftnt-ref-1">1</a>: Yes, the function also returns the exact same out-param that is passed in. This is required by the ABI, and is quite reasonable if you think about it, since rdi would've been clobbered by the call, and the caller probably wants to use the return value afterwards.</p>
+            <p id="ftnt-1"><a href="#ftnt-ref-1">1</a>: Yes, the function also returns the exact same out-param that is passed in. This is required by the ABI.</p>
             <p id="ftnt-2"><a href="#ftnt-ref-2">2</a>: When I said "copy", I meant a copy of the underlying bytes, not of the C++ object. The code is in fact the result of inlining <code>std::vector</code>'s move constructor, as you'd expect.</p>
         </section>
     </body>

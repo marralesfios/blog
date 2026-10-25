@@ -6,7 +6,7 @@
     display: block;
 }
 .def{
-    background-color: #5f9fb4;
+    background-color: #addbea;
     margin: 10px auto;
     width: 58%;
     padding: 10px;
@@ -14,15 +14,23 @@
     box-sizing: border-box;
 }
 code{
-    background-color: black;
-    color: white;
     width: fit-content;
-    padding-inline: 4px;
     box-sizing: border-box;
     display: inline-block;
     font-weight: 500;
     &.block{
-        padding-inline-end: 10ch;
+        padding-inline-start: 4px;
+        padding-inline-end: calc(8ch + 4px);
         white-space: pre;
+    }
+}
+@media(prefers-color-scheme: light){
+    code.block{
+        border: 1px solid black;
+    }
+}
+@media(prefers-color-scheme: dark){
+    code.block{
+        background-color: black;
     }
 }

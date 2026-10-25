@@ -1,9 +1,9 @@
 html{
-    background-color: #202122;
+    color-scheme: light dark;
+    background-color: light-dark(white,#202122);
     font-size: 120%;
     display: flex;
     justify-content: center;
-    color: white;
 }
 body{
     width: 70vw;
@@ -24,14 +24,6 @@ small{
 }
 li>:is(h2,h3):first-child, .nmm{
     margin-bottom: 0;
-}
-a{
-    &:link{
-        color: #a1dbff;
-    }
-    &:visited{
-        color: #ea89a9;
-    }
 }
 .concept{
     font-variant: small-caps;
@@ -58,7 +50,7 @@ blockquote{
     flex-direction: column;
     align-items: flex-start;
     >textarea{
-        background-color: #202122;
+        background-color: light-dark(white,#202122);
         color: white;
         width: 90ch;
         min-height: 15lh;
